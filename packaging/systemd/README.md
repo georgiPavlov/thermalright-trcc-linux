@@ -1,13 +1,14 @@
 # trccd service files
 
-Optional OS-level service registration for the TRCC daemon. The daemon
-auto-spawns when any UI calls it, so installing these is **not required**
-— they just make the daemon survive reboots / logout.
+The TRCC daemon is the recommended Linux/Bazzite runtime. It owns USB,
+polls sensors, and renders LED state without starting Qt or any graphical
+interface. It is independent of `graphical-session.target`, so it survives
+Desktop Mode → Gamescope/Gaming Mode transitions.
 
 ## Linux (systemd user unit)
 
 ```bash
-# Install the unit (one-time)
+# Install the unit (one-time; from this repository)
 mkdir -p ~/.config/systemd/user
 cp trccd.service ~/.config/systemd/user/
 
@@ -18,7 +19,7 @@ systemctl --user enable --now trccd.service
 # Check status
 systemctl --user status trccd
 
-# Tail logs (the daemon also writes ~/.trcc/trcc.log)
+# Tail logs
 journalctl --user -u trccd -f
 ```
 

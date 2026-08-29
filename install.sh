@@ -24,6 +24,8 @@ REAL_USER="${SUDO_USER:-$USER}"
 REAL_HOME="$(getent passwd "$REAL_USER" | cut -d: -f6)"
 DESKTOP_FILE="$REAL_HOME/.local/share/applications/trcc.desktop"
 AUTOSTART_FILE="$REAL_HOME/.config/autostart/trcc.desktop"
+USER_SERVICE_DIR="$REAL_HOME/.config/systemd/user"
+DAEMON_SERVICE_FILE="$USER_SERVICE_DIR/trccd.service"
 CONFIG_DIR="$REAL_HOME/.trcc"
 USER_CONTENT_DIR="$REAL_HOME/.trcc-user"
 LEGACY_CONFIG_DIR="$REAL_HOME/.config/trcc"
@@ -268,7 +270,7 @@ do_install() {
     step "2/3" "Installing TRCC Python package..."
     install_trcc
 
-    step "3/3" "Running setup wizard (deps, udev, desktop entry)..."
+    step "3/3" "Running setup wizard (deps and udev)..."
     local trcc_cmd
     trcc_cmd="$(find_trcc_cmd)"
     info "Running: $trcc_cmd system setup"
@@ -294,7 +296,61 @@ do_install() {
         PYTHONPATH="$site_paths:$SCRIPT_DIR/src" "$trcc_cmd" system setup
     fi
 
+    install_headless_service
+
     print_success
+}
+
+install_headless_service() {
+    # The GUI autostart is intentionally removed.  On Bazzite it becomes an
+    # app-trcc@autostart.service tied to graphical-session.target and is
+    # stopped when Gamescope starts.  trccd owns the USB device directly and
+    # has no Qt/display dependency.
+    local trcc_bin
+    if [ "$USE_VENV" = true ]; then
+        trcc_bin="$VENV_DIR/bin/trcc"
+    elif [ -x "$REAL_HOME/.local/bin/trcc" ]; then
+        trcc_bin="$REAL_HOME/.local/bin/trcc"
+    else
+        trcc_bin="$(command -v trcc || true)"
+    fi
+    [ -x "$trcc_bin" ] || { error "Cannot resolve the installed trcc executable."; exit 1; }
+
+    step "service" "Installing headless TRCC daemon"
+    mkdir -p "$USER_SERVICE_DIR"
+    printf '%s\n' \
+        '[Unit]' \
+        'Description=Thermalright TRCC headless USB daemon' \
+        'Documentation=https://github.com/Lexonight1/thermalright-trcc-linux' \
+        '# Do not use PartOf=graphical-session.target: Bazzite stops that target when' \
+        '# switching Desktop Mode to Gamescope/Gaming Mode.' \
+        'After=default.target' \
+        '' \
+        '[Service]' \
+        'Type=simple' \
+        "ExecStart=$trcc_bin daemon" \
+        'Environment=TRCC_HEADLESS=1' \
+        'Environment=PYTHONUNBUFFERED=1' \
+        'Environment=HOME=%h' \
+        'Environment=XDG_RUNTIME_DIR=/run/user/%U' \
+        'Restart=always' \
+        'RestartSec=5' \
+        '' \
+        '[Install]' \
+        'WantedBy=default.target' > "$DAEMON_SERVICE_FILE"
+
+    # Remove both old GUI launch paths before enabling the singleton daemon.
+    rm -f "$AUTOSTART_FILE"
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl --user disable --now trcc.service 2>/dev/null || true
+        systemctl --user disable --now app-trcc@autostart.service 2>/dev/null || true
+        systemctl --user daemon-reload 2>/dev/null || true
+        systemctl --user enable --now trccd.service 2>/dev/null || true
+    fi
+    if command -v loginctl >/dev/null 2>&1; then
+        loginctl enable-linger "$REAL_USER" 2>/dev/null || true
+    fi
+    info "Installed $DAEMON_SERVICE_FILE (headless; no GUI)."
 }
 
 print_success() {
@@ -341,6 +397,14 @@ do_uninstall() {
         "$VENV_DIR/bin/pip" uninstall -y trcc-linux 2>/dev/null || true
         rm -rf "$VENV_DIR"
         info "Removed venv: $VENV_DIR"
+        removed=1
+    fi
+
+    if [ -f "$DAEMON_SERVICE_FILE" ]; then
+        systemctl --user disable --now trccd.service 2>/dev/null || true
+        rm -f "$DAEMON_SERVICE_FILE"
+        systemctl --user daemon-reload 2>/dev/null || true
+        info "Removed $DAEMON_SERVICE_FILE"
         removed=1
     fi
 

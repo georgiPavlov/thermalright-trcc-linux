@@ -76,7 +76,14 @@ def run_daemon(
     # bomb (#162).  Strip it so this process is unambiguously the daemon.
     from ._boot import _ENV_FLAG, _build_local_app
     os.environ.pop(_ENV_FLAG, None)
+    # A service must never construct a Qt renderer.  Apart from being
+    # unnecessary for LED controllers, doing so couples USB ownership to a
+    # desktop display and is exactly what breaks during Gamescope switches.
+    os.environ["TRCC_HEADLESS"] = "1"
     app = _build_local_app(platform=platform, renderer=renderer)
+    # Hotplug monitors only report future attach/detach events.  A daemon
+    # started by systemd must also claim devices that were already present.
+    app.discover_and_connect()
     app.start_hotplug()
     # Without the metrics loop the daemon owns USB but never ticks — the
     # device stays connected yet permanently blank (#148).  ``App.close()``

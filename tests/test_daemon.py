@@ -38,6 +38,7 @@ def test_run_daemon_starts_metrics_loop_and_pops_flag(
     monkeypatch.setattr(ipc, "daemon_running", lambda: False)
 
     app = mock.MagicMock()
+    app.discover_and_connect = mock.MagicMock()
     monkeypatch.setattr(
         "trcc._boot._build_local_app",
         lambda *, platform=None, renderer=None: app,
@@ -49,9 +50,28 @@ def test_run_daemon_starts_metrics_loop_and_pops_flag(
     rc = daemon.run_daemon()
 
     assert rc == 0
+    app.discover_and_connect.assert_called_once()  # coldplug existing hardware
     app.metrics_loop.start.assert_called_once()   # #148
     app.close.assert_called_once()                # teardown (stops the loop)
     assert _ENV_FLAG not in os.environ            # #162 — flag popped
+
+
+def test_daemon_selects_headless_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The system service must not create a Qt renderer or need a display."""
+    monkeypatch.delenv("TRCC_HEADLESS", raising=False)
+    monkeypatch.setattr(ipc, "daemon_running", lambda: False)
+    app = mock.MagicMock()
+    captured: dict[str, object] = {}
+
+    def build(*, platform=None, renderer=None):
+        captured["headless"] = os.environ.get("TRCC_HEADLESS")
+        return app
+
+    monkeypatch.setattr("trcc._boot._build_local_app", build)
+    monkeypatch.setattr(ipc, "IPCServer", lambda a: mock.MagicMock())
+    monkeypatch.setattr(daemon, "_install_signal_handlers", lambda s: None)
+    daemon.run_daemon()
+    assert captured["headless"] == "1"
 
 
 def test_run_daemon_injects_platform_and_renderer(

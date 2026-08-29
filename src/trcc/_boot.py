@@ -87,7 +87,7 @@ def _build_local_app(
 
     real_platform = platform if platform is not None else current_platform()
     real_renderer = renderer
-    if real_renderer is None:
+    if real_renderer is None and os.environ.get("TRCC_HEADLESS") != "1":
         try:
             from .adapters.render.qt import QtRenderer
             real_renderer = QtRenderer()
